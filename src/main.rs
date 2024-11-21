@@ -44,20 +44,29 @@ fn do_mutate() -> anyhow::Result<HashMap<String, String>> {
     for target in &targets {
         debug!("cargo build --release --target={target}");
         let out = Command::new("cargo")
-            .args(&["build", "--release", format!("--target=${target}").as_str()])
+            .args(["build", "--release", format!("--target={target}").as_str()])
             .output()?;
-        assert!(out.status.success());
+        assert!(out.status.success(), "{out:?}");
     }
 
     debug!("cargo pkgid");
     let out = Command::new("cargo").arg("pkgid").output()?;
     assert!(out.status.success());
-    let version = String::from_utf8(out.stdout).expect("cargo pkgid contained non-utf8 text");
+    let pkg_id = String::from_utf8(out.stdout).expect("cargo pkgid contained non-utf8 text");
+
+    let version = pkg_id
+        .as_str()
+        .split("#")
+        .nth(1)
+        .expect(format!("Version not found in {pkg_id}").as_str())
+        .trim()
+        .to_string();
+
     assert!(out.status.success());
 
     // cargo metadata --no-deps --format-version 1 | jq -r '.packages[].targets[] | select( .kind | map(. == "bin") | any ) | .name'
     debug!("rm -rf gh-tmp");
-    let out = Command::new("rm").args(&["-r", "-f", "gh-tmp"]).output()?;
+    let out = Command::new("rm").args(["-r", "-f", "gh-tmp"]).output()?;
     assert!(out.status.success());
     debug!("mkdir gh-tmp");
     let out = Command::new("mkdir").arg("gh-tmp").output()?;
@@ -68,34 +77,42 @@ fn do_mutate() -> anyhow::Result<HashMap<String, String>> {
     for target in &targets {
         // ocp-0.1.0-macos-arm.tar.gz
         // project_name-version-target.tar.gz
+        // first build
         debug!("Running tarball code");
         let f_name = format!("gh-tmp/{bin_name}-{version}-{target}.tar.gz");
-        let tar_gz = File::create(f_name)?;
+        let tar_gz = File::create(f_name.as_str())?;
         let enc = GzEncoder::new(tar_gz, Compression::default());
         let mut tar = tar::Builder::new(enc);
         let tar_f_name = format!("target/{target}/release/{bin_name}");
-        tar.append_dir_all("", tar_f_name.as_str())?;
+        tar.append_path_with_name(tar_f_name.as_str(), bin_name.as_str())?;
         debug!("Calculating sha256 of {tar_f_name}");
         let hash = sha256_digest(tar_f_name.as_str())?;
-        file_maps.insert(tar_f_name, hash);
+        file_maps.insert(f_name, hash);
     }
 
+    debug!("gh release create {version}");
     let out = Command::new("gh")
         .arg("release")
         .arg("create")
         .arg(version.as_str())
         .output()?;
 
-    warn!("gh version could not be created, it may have existed");
+    if !out.status.success() {
+        warn!("gh version could not be created, it may have existed");
+        debug!("{:?}", String::from_utf8(out.stdout));
+        debug!("{:?}", String::from_utf8(out.stderr));
+    }
 
-    for (k, _) in &file_maps {
+    for k in file_maps.keys() {
+        debug!("gh release upload {version} {k} --clobber");
         let out = Command::new("gh")
             .arg("release")
             .arg("upload")
             .arg(version.as_str())
             .arg(k)
             .arg("--clobber")
-            .output();
+            .output()?;
+        assert!(out.status.success());
     }
 
     Ok(file_maps)
@@ -122,7 +139,7 @@ fn sha256_digest<T: AsRef<Path>>(path: T) -> anyhow::Result<String> {
 
 fn cleanup() -> anyhow::Result<()> {
     debug!("rm -rf gh-tmp");
-    let out = Command::new("rm").args(&["-r", "-f", "gh-tmp"]).output()?;
+    let out = Command::new("rm").args(["-r", "-f", "gh-tmp"]).output()?;
     assert!(out.status.success());
     Ok(())
 }

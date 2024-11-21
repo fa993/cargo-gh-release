@@ -3,6 +3,10 @@ name = "cargo-gh-release"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "cgh"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1.0.93"
 data-encoding = "2.6.0"
