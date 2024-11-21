@@ -9,7 +9,7 @@ use std::{
 
 use data_encoding::HEXLOWER;
 use flate2::{write::GzEncoder, Compression};
-use log::debug;
+use log::{debug, warn};
 use sha2::{Digest, Sha256};
 
 fn main() -> anyhow::Result<()> {
@@ -78,6 +78,24 @@ fn do_mutate() -> anyhow::Result<HashMap<String, String>> {
         debug!("Calculating sha256 of {tar_f_name}");
         let hash = sha256_digest(tar_f_name.as_str())?;
         file_maps.insert(tar_f_name, hash);
+    }
+
+    let out = Command::new("gh")
+        .arg("release")
+        .arg("create")
+        .arg(version.as_str())
+        .output()?;
+
+    warn!("gh version could not be created, it may have existed");
+
+    for (k, _) in &file_maps {
+        let out = Command::new("gh")
+            .arg("release")
+            .arg("upload")
+            .arg(version.as_str())
+            .arg(k)
+            .arg("--clobber")
+            .output();
     }
 
     Ok(file_maps)
